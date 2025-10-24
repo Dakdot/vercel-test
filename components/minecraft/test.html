@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft Clone - Three.js Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            z-index: 100;
+            max-width: 300px;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 8px;
+            z-index: 100;
+            font-size: 12px;
+        }
+
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h3>🎮 Minecraft Clone Test</h3>
+        <p>Testing Three.js functionality for the browser-based Minecraft clone.</p>
+        <p><strong>Status:</strong> <span id="status">Loading...</span></p>
+    </div>
+
+    <div id="controls">
+        <strong>Test Controls:</strong><br>
+        • Mouse: Rotate camera<br>
+        • W/A/S/D: Move camera<br>
+        • Click: Add random block
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Test Three.js Minecraft Clone functionality
+        let scene, camera, renderer, world = new Map();
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        let prevTime = performance.now();
+
+        // Block materials
+        const materials = {
+            grass: new THREE.MeshLambertMaterial({ color: 0x4a9c4a }),
+            dirt: new THREE.MeshLambertMaterial({ color: 0x8b4513 }),
+            stone: new THREE.MeshLambertMaterial({ color: 0x666666 }),
+            wood: new THREE.MeshLambertMaterial({ color: 0x8b4513 }),
+            leaves: new THREE.MeshLambertMaterial({ color: 0x228b22 })
+        };
+
+        const blockTypes = ['grass', 'dirt', 'stone', 'wood', 'leaves'];
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 10, 10);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(50, 50, 25);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            // Generate test world
+            generateTestWorld();
+
+            // Controls
+            setupControls();
+
+            // Update status
+            document.getElementById('status').textContent = 'Ready! 🟢';
+            document.getElementById('status').style.color = '#4ade80';
+
+            animate();
+        }
+
+        function generateTestWorld() {
+            const size = 10;
+
+            for (let x = -size; x <= size; x++) {
+                for (let z = -size; z <= size; z++) {
+                    const height = Math.floor(Math.sin(x * 0.1) * Math.cos(z * 0.1) * 2) + 3;
+
+                    for (let y = 0; y <= height; y++) {
+                        let blockType;
+                        if (y === height) {
+                            blockType = 'grass';
+                        } else if (y >= height - 2) {
+                            blockType = 'dirt';
+                        } else {
+                            blockType = 'stone';
+                        }
+
+                        createBlock(x, y, z, blockType);
+                    }
+
+                    // Add some random trees
+                    if (Math.random() < 0.1 && height > 2) {
+                        const treeHeight = 3 + Math.floor(Math.random() * 2);
+
+                        // Trunk
+                        for (let y = height + 1; y <= height + treeHeight; y++) {
+                            createBlock(x, y, z, 'wood');
+                        }
+
+                        // Leaves
+                        const leafY = height + treeHeight;
+                        for (let dx = -1; dx <= 1; dx++) {
+                            for (let dz = -1; dz <= 1; dz++) {
+                                if (Math.random() < 0.7) {
+                                    createBlock(x + dx, leafY, z + dz, 'leaves');
+                                    if (Math.random() < 0.5) {
+                                        createBlock(x + dx, leafY + 1, z + dz, 'leaves');
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function createBlock(x, y, z, type) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const mesh = new THREE.Mesh(geometry, materials[type]);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+
+            scene.add(mesh);
+            world.set(`${x},${y},${z}`, mesh);
+        }
+
+        function setupControls() {
+            // Mouse controls
+            let mouseX = 0, mouseY = 0;
+            const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+            document.addEventListener('mousemove', (event) => {
+                mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+                mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+
+                euler.setFromQuaternion(camera.quaternion);
+                euler.y = mouseX * Math.PI;
+                euler.x = mouseY * Math.PI * 0.5;
+                camera.quaternion.setFromEuler(euler);
+            });
+
+            // Keyboard controls
+            document.addEventListener('keydown', (event) => {
+                switch(event.code) {
+                    case 'KeyW': moveForward = true; break;
+                    case 'KeyS': moveBackward = true; break;
+                    case 'KeyA': moveLeft = true; break;
+                    case 'KeyD': moveRight = true; break;
+                }
+            });
+
+            document.addEventListener('keyup', (event) => {
+                switch(event.code) {
+                    case 'KeyW': moveForward = false; break;
+                    case 'KeyS': moveBackward = false; break;
+                    case 'KeyA': moveLeft = false; break;
+                    case 'KeyD': moveRight = false; break;
+                }
+            });
+
+            // Click to add block
+            document.addEventListener('click', (event) => {
+                const randomX = Math.floor(Math.random() * 20) - 10;
+                const randomY = Math.floor(Math.random() * 10) + 5;
+                const randomZ = Math.floor(Math.random() * 20) - 10;
+                const randomType = blockTypes[Math.floor(Math.random() * blockTypes.length)];
+
+                createBlock(randomX, randomY, randomZ, randomType);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = performance.now();
+            const delta = (time - prevTime) / 1000;
+
+            // Update movement
+            velocity.x -= velocity.x * 10.0 * delta;
+            velocity.z -= velocity.z * 10.0 * delta;
+
+            direction.z = Number(moveForward) - Number(moveBackward);
+            direction.x = Number(moveRight) - Number(moveLeft);
+            direction.normalize();
+
+            if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+            if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+            const quaternion = camera.quaternion.clone();
+            const forward = new THREE.Vector3(0, 0, -1);
+            forward.applyQuaternion(quaternion);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3(1, 0, 0);
+            right.applyQuaternion(quaternion);
+            right.y = 0;
+            right.normalize();
+
+            camera.position.addScaledVector(forward, velocity.z * delta);
+            camera.position.addScaledVector(right, velocity.x * delta);
+
+            prevTime = time;
+
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initialize when page loads
+        init();
+    </script>
+</body>
+</html>

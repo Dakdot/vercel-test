@@ -14,12 +14,237 @@ const BLOCK_TYPES = {
 
 type BlockType = (typeof BLOCK_TYPES)[keyof typeof BLOCK_TYPES];
 
+// Cow mob class
+class Cow {
+  public mesh: THREE.Group;
+  public position: THREE.Vector3;
+  public direction: THREE.Vector3;
+  public speed: number;
+  public wanderTimer: number;
+  public maxWanderTime: number;
+  public id: string;
+  public isFed: boolean;
+  public followTarget: THREE.Vector3 | null;
+  public fedTimer: number;
+  public maxFedTime: number;
+
+  constructor(x: number, y: number, z: number) {
+    this.id = Math.random().toString(36).substr(2, 9);
+    this.position = new THREE.Vector3(x, y, z);
+    this.direction = new THREE.Vector3(
+      (Math.random() - 0.5) * 2,
+      0,
+      (Math.random() - 0.5) * 2,
+    ).normalize();
+    this.speed = 0.5 + Math.random() * 0.5; // Random speed between 0.5 and 1.0
+    this.wanderTimer = 0;
+    this.maxWanderTime = 3 + Math.random() * 4; // Change direction every 3-7 seconds
+    this.isFed = false;
+    this.followTarget = null;
+    this.fedTimer = 0;
+    this.maxFedTime = 10; // Follow for 10 seconds after being fed
+
+    this.mesh = this.createCowMesh();
+    this.mesh.position.copy(this.position);
+  }
+
+  private createCowMesh(): THREE.Group {
+    const cowGroup = new THREE.Group();
+
+    // Materials
+    const whiteMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const blackMaterial = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    const pinkMaterial = new THREE.MeshLambertMaterial({ color: 0xffb6c1 });
+    const happyMaterial = new THREE.MeshLambertMaterial({ color: 0xffff99 }); // Slightly yellow when happy
+
+    // Body (main part)
+    const bodyGeometry = new THREE.BoxGeometry(1.2, 0.8, 2);
+    const bodyMesh = new THREE.Mesh(bodyGeometry, whiteMaterial);
+    bodyMesh.position.set(0, 0.4, 0);
+    bodyMesh.userData = { part: "body" }; // For material switching
+    cowGroup.add(bodyMesh);
+
+    // Head
+    const headGeometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    const headMesh = new THREE.Mesh(headGeometry, whiteMaterial);
+    headMesh.position.set(0, 0.8, 1.2);
+    cowGroup.add(headMesh);
+
+    // Legs
+    const legGeometry = new THREE.BoxGeometry(0.2, 0.8, 0.2);
+    const positions = [
+      [-0.4, -0.4, 0.6], // Front left
+      [0.4, -0.4, 0.6], // Front right
+      [-0.4, -0.4, -0.6], // Back left
+      [0.4, -0.4, -0.6], // Back right
+    ];
+
+    positions.forEach(([x, y, z]) => {
+      const legMesh = new THREE.Mesh(legGeometry, whiteMaterial);
+      legMesh.position.set(x, y, z);
+      cowGroup.add(legMesh);
+    });
+
+    // Spots (black patches)
+    const spotGeometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
+    const spotPositions = [
+      [-0.3, 0.85, 0.2],
+      [0.2, 0.85, -0.3],
+      [0.1, 0.85, 0.4],
+    ];
+
+    spotPositions.forEach(([x, y, z]) => {
+      const spotMesh = new THREE.Mesh(spotGeometry, blackMaterial);
+      spotMesh.position.set(x, y, z);
+      cowGroup.add(spotMesh);
+    });
+
+    // Udder
+    const udderGeometry = new THREE.SphereGeometry(0.2, 8, 6);
+    const udderMesh = new THREE.Mesh(udderGeometry, pinkMaterial);
+    udderMesh.position.set(0, 0.1, -0.3);
+    cowGroup.add(udderMesh);
+
+    // Tail
+    const tailGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.6);
+    const tailMesh = new THREE.Mesh(tailGeometry, blackMaterial);
+    tailMesh.position.set(0, 0.3, -1.1);
+    tailMesh.rotation.x = Math.PI / 4;
+    cowGroup.add(tailMesh);
+
+    // Ears
+    const earGeometry = new THREE.BoxGeometry(0.2, 0.3, 0.1);
+    const leftEar = new THREE.Mesh(earGeometry, whiteMaterial);
+    leftEar.position.set(-0.3, 1.0, 1.2);
+    leftEar.rotation.z = Math.PI / 6;
+    cowGroup.add(leftEar);
+
+    const rightEar = new THREE.Mesh(earGeometry, whiteMaterial);
+    rightEar.position.set(0.3, 1.0, 1.2);
+    rightEar.rotation.z = -Math.PI / 6;
+    cowGroup.add(rightEar);
+
+    return cowGroup;
+  }
+
+  public update(delta: number, worldBounds: { min: number; max: number }) {
+    this.wanderTimer += delta;
+
+    // Update fed timer
+    if (this.isFed) {
+      this.fedTimer += delta;
+      if (this.fedTimer >= this.maxFedTime) {
+        this.isFed = false;
+        this.followTarget = null;
+        this.fedTimer = 0;
+        this.updateBodyColor(false);
+      }
+    }
+
+    // Behavior based on fed state
+    if (this.isFed && this.followTarget) {
+      // Follow the target (player)
+      const directionToTarget = this.followTarget.clone().sub(this.position);
+      const distanceToTarget = directionToTarget.length();
+
+      if (distanceToTarget > 2) {
+        // Don't get too close
+        this.direction = directionToTarget.normalize();
+        this.speed = 1.5; // Move faster when following
+      } else {
+        // Stop when close enough
+        this.direction.set(0, 0, 0);
+      }
+    } else {
+      // Normal wandering behavior
+      this.speed = 0.5 + Math.random() * 0.5;
+
+      // Change direction periodically or if hitting world bounds
+      if (
+        this.wanderTimer >= this.maxWanderTime ||
+        this.isNearWorldBounds(worldBounds)
+      ) {
+        this.wanderTimer = 0;
+        this.maxWanderTime = 3 + Math.random() * 4;
+
+        // Random new direction
+        this.direction
+          .set((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2)
+          .normalize();
+      }
+    }
+
+    // Move the cow
+    const movement = this.direction.clone().multiplyScalar(this.speed * delta);
+    this.position.add(movement);
+
+    // Keep cow within world bounds
+    this.position.x = Math.max(
+      worldBounds.min + 2,
+      Math.min(worldBounds.max - 2, this.position.x),
+    );
+    this.position.z = Math.max(
+      worldBounds.min + 2,
+      Math.min(worldBounds.max - 2, this.position.z),
+    );
+
+    // Update mesh position
+    this.mesh.position.copy(this.position);
+
+    // Rotate cow to face movement direction
+    if (this.direction.length() > 0) {
+      const angle = Math.atan2(this.direction.x, this.direction.z);
+      this.mesh.rotation.y = angle;
+    }
+
+    // Simple bob animation
+    const time = Date.now() * 0.001;
+    this.mesh.position.y = this.position.y + Math.sin(time * 2) * 0.05;
+  }
+
+  private isNearWorldBounds(worldBounds: {
+    min: number;
+    max: number;
+  }): boolean {
+    const buffer = 3;
+    return (
+      this.position.x <= worldBounds.min + buffer ||
+      this.position.x >= worldBounds.max - buffer ||
+      this.position.z <= worldBounds.min + buffer ||
+      this.position.z >= worldBounds.max - buffer
+    );
+  }
+
+  public feed(playerPosition: THREE.Vector3) {
+    this.isFed = true;
+    this.followTarget = playerPosition.clone();
+    this.fedTimer = 0;
+    this.updateBodyColor(true);
+  }
+
+  private updateBodyColor(isFed: boolean) {
+    const happyMaterial = new THREE.MeshLambertMaterial({ color: 0xffff99 });
+    const normalMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+
+    this.mesh.children.forEach((child) => {
+      if (child.userData.part === "body") {
+        (child as THREE.Mesh).material = isFed ? happyMaterial : normalMaterial;
+      }
+    });
+  }
+
+  public getDistanceToPoint(point: THREE.Vector3): number {
+    return this.position.distanceTo(point);
+  }
+}
+
 const MinecraftGame = () => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const worldRef = useRef<Map<string, THREE.Mesh>>(new Map());
+  const cowsRef = useRef<Map<string, Cow>>(new Map());
   const [selectedBlock, setSelectedBlock] = useState<BlockType>(
     BLOCK_TYPES.GRASS,
   );
@@ -39,8 +264,16 @@ const MinecraftGame = () => {
 
   // Create block materials
   const createMaterials = () => {
+    // Load grass texture
+    const textureLoader = new THREE.TextureLoader();
+    const grassTexture = textureLoader.load("/grass.png");
+    grassTexture.magFilter = THREE.NearestFilter;
+    grassTexture.minFilter = THREE.NearestFilter;
+    grassTexture.wrapS = THREE.RepeatWrapping;
+    grassTexture.wrapT = THREE.RepeatWrapping;
+
     const materials: Record<BlockType, THREE.Material> = {
-      [BLOCK_TYPES.GRASS]: new THREE.MeshLambertMaterial({ color: 0x4a9c4a }),
+      [BLOCK_TYPES.GRASS]: new THREE.MeshLambertMaterial({ map: grassTexture }),
       [BLOCK_TYPES.DIRT]: new THREE.MeshLambertMaterial({ color: 0x8b4513 }),
       [BLOCK_TYPES.STONE]: new THREE.MeshLambertMaterial({ color: 0x666666 }),
       [BLOCK_TYPES.WOOD]: new THREE.MeshLambertMaterial({ color: 0x8b4513 }),
@@ -118,6 +351,31 @@ const MinecraftGame = () => {
     }
 
     return world;
+  };
+
+  // Spawn cows in the world
+  const spawnCows = (scene: THREE.Scene, count: number = 5) => {
+    const cows = new Map<string, Cow>();
+    const size = 15; // Spawn within a smaller area
+
+    for (let i = 0; i < count; i++) {
+      let x, z, y;
+      let attempts = 0;
+
+      // Find a suitable spawn position
+      do {
+        x = Math.random() * size * 2 - size;
+        z = Math.random() * size * 2 - size;
+        y = Math.floor(Math.sin(x * 0.1) * Math.cos(z * 0.1) * 3) + 6; // Surface height + 1
+        attempts++;
+      } while (attempts < 50); // Prevent infinite loop
+
+      const cow = new Cow(x, y, z);
+      scene.add(cow.mesh);
+      cows.set(cow.id, cow);
+    }
+
+    return cows;
   };
 
   // Handle pointer lock
@@ -216,6 +474,10 @@ const MinecraftGame = () => {
     const world = generateWorld(scene, materials);
     worldRef.current = world;
 
+    // Spawn cows
+    const cows = spawnCows(scene, 5);
+    cowsRef.current = cows;
+
     currentMount.appendChild(renderer.domElement);
 
     // Controls
@@ -290,6 +552,32 @@ const MinecraftGame = () => {
     const handleClick = (event: MouseEvent) => {
       if (!isMouseLocked) return;
 
+      // Check if clicking on a cow first
+      const raycaster = new THREE.Raycaster();
+      const direction = new THREE.Vector3(0, 0, -1);
+      direction.applyQuaternion(camera.quaternion);
+      raycaster.set(camera.position, direction);
+
+      // Get all cow meshes
+      const cowMeshes = Array.from(cows.values()).map((cow) => cow.mesh);
+      const cowIntersects = raycaster.intersectObjects(cowMeshes, true);
+
+      if (cowIntersects.length > 0 && event.button === 2) {
+        // Right click on cow - feed it
+        const clickedCowMesh =
+          cowIntersects[0].object.parent || cowIntersects[0].object;
+        const clickedCow = Array.from(cows.values()).find(
+          (cow) =>
+            cow.mesh === clickedCowMesh ||
+            cow.mesh.children.includes(clickedCowMesh as any),
+        );
+
+        if (clickedCow && !clickedCow.isFed) {
+          clickedCow.feed(camera.position);
+          return; // Don't place blocks when feeding cows
+        }
+      }
+
       const target = getTargetBlock(camera, world);
       if (!target) return;
 
@@ -350,6 +638,16 @@ const MinecraftGame = () => {
         camera.position.y += direction.current.y;
       }
 
+      // Update cows
+      const worldBounds = { min: -20, max: 20 };
+      cows.forEach((cow) => {
+        // Update follow target to current camera position if cow is fed
+        if (cow.isFed && cow.followTarget) {
+          cow.followTarget.copy(camera.position);
+        }
+        cow.update(delta, worldBounds);
+      });
+
       renderer.render(scene, camera);
       requestAnimationFrame(animate);
     };
@@ -384,6 +682,12 @@ const MinecraftGame = () => {
       document.removeEventListener("mousedown", handleClick);
       window.removeEventListener("resize", handleResize);
 
+      // Clean up cows
+      cows.forEach((cow) => {
+        scene.remove(cow.mesh);
+      });
+      cows.clear();
+
       if (currentMount && renderer.domElement) {
         currentMount.removeChild(renderer.domElement);
       }
@@ -415,8 +719,23 @@ const MinecraftGame = () => {
               <li>Shift - Down</li>
               <li>Left Click - Remove block</li>
               <li>Right Click - Place block</li>
+              <li>Right Click Cow - Feed cow</li>
               <li>ESC - Exit</li>
             </ul>
+            <div className="mt-3 pt-2 border-t border-gray-500">
+              <p className="text-xs text-green-400">
+                🐄 {cowsRef.current.size} Cows roaming
+              </p>
+              <p className="text-xs text-yellow-400">
+                🌾{" "}
+                {
+                  Array.from(cowsRef.current.values()).filter(
+                    (cow) => cow.isFed,
+                  ).length
+                }{" "}
+                Fed cows following
+              </p>
+            </div>
           </div>
         )}
       </div>
